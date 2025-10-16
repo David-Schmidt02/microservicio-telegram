@@ -12,7 +12,7 @@ class UserService:
         self.api_url = settings.USER_SYSTEM_URL
         #self.api_key = settings.USER_SYSTEM_API_KEY
 
-    def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def get_user_info_from_message(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
         Obtiene información del usuario desde el sistema destino
 

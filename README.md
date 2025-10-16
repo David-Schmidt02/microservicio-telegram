@@ -1,345 +1,326 @@
-# Microservicio de Telegram - Procesador de Audio
+# Microservicio de Telegram - Procesador de Audio y Texto
 
-Microservicio en Python que procesa mensajes de audio en grupos de Telegram, los transcribe usando una API externa y envia las transcripciones a un sistema de queries.
+Microservicio en Python que procesa mensajes de audio y texto en grupos de Telegram. Los audios se transcriben usando una API externa y tanto las transcripciones como los mensajes de texto se envían a un sistema de queries para obtener respuestas inteligentes.
 
-## Caracteristicas
+## Características
 
-- Bot de Telegram con polling cada 2-3 segundos
-- Deteccion automatica de mensajes de audio/voz
-- Transcripcion de audio mediante API externa
-- Envio de transcripciones a sistema de queries
-- Procesamiento asincrono
-- Logging detallado
-- Limpieza automatica de archivos temporales
+- Bot de Telegram con polling cada 2-3 segundos (configurable)
+- Detección automática de mensajes de audio/voz y texto
+- Transcripción de audio mediante API externa
+- Procesamiento asíncrono con asyncio
+- Manejo de sesiones por grupo de Telegram
+- Validación de datos con Pydantic
+- Logging detallado con niveles configurables
+- Limpieza automática de archivos temporales
+
+---
+
+## Instalación
+
+### 1. Clonar e instalar dependencias
+
+```bash
+git clone <url-del-repositorio>
+cd microservicio-telegram
+
+# Crear entorno virtual
+python -m venv venv
+venv\Scripts\activate  # Windows
+# source venv/bin/activate  # Linux/Mac
+
+pip install -r requirements.txt
+```
+
+### 2. Configurar variables de entorno
+
+Copia `.env.example` a `.env` y configura:
+
+```env
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_CHAT_ID=-1001234567890
+TRANSCRIPTION_API_URL=https://tu-api.com/transcribe
+QUERY_SYSTEM_URL=https://tu-sistema.com/query
+POLLING_INTERVAL=2.5
+LOG_LEVEL=INFO
+```
+
+### 3. Configurar el Bot de Telegram
+
+1. Busca **@BotFather** en Telegram y envía `/newbot`
+2. Guarda el token en `TELEGRAM_BOT_TOKEN`
+3. Agrega el bot a tu grupo
+4. Obtén el Chat ID visitando: `https://api.telegram.org/bot<TOKEN>/getUpdates`
+5. Copia el `chat.id` en `TELEGRAM_CHAT_ID`
+6. **Importante:** Desactiva Privacy Mode enviando `/setprivacy` a @BotFather
+
+### 4. Ejecutar
+
+```bash
+python main.py
+```
+
+---
 
 ## Estructura del Proyecto
 
 ```
 microservicio-telegram/
 ├── src/
+│   ├── bot.py                      # Orquestador principal (TelegramAudioBot)
+│   ├── schemas.py                  # Modelos Pydantic para validación
 │   ├── config/
-│   │   └── settings.py          # Configuracion centralizada
+│   │   └── settings.py             # Configuración centralizada
 │   ├── services/
-│   │   ├── telegram_service.py  # Cliente de Telegram API
-│   │   ├── transcription_service.py  # Servicio de transcripcion
-│   │   └── query_service.py     # Servicio de queries
+│   │   ├── telegram_service.py     # Cliente de Telegram API
+│   │   ├── transcription_service.py # Servicio de transcripción
+│   │   ├── query_service.py        # Servicio de queries
+│   │   └── user_service.py         # Gestión de usuarios
 │   └── utils/
-│       └── logger.py            # Configuracion de logs
-├── main.py                      # Punto de entrada del microservicio
-├── requirements.txt             # Dependencias de Python
-├── .env.example                 # Ejemplo de variables de entorno
-└── README.md                    # Este archivo
+│       └── logger.py               # Configuración de logging
+├── temp_audio/                     # Archivos temporales (auto-creado)
+├── main.py                         # Punto de entrada
+└── requirements.txt
 ```
 
-## Requisitos Previos
+---
 
-- Python 3.8 o superior
-- pip (gestor de paquetes de Python)
-- Cuenta de Telegram
-- Token de Bot de Telegram
-- API de transcripcion
-- Sistema de queries destino
+## Arquitectura
 
-## Instalacion
+### Patrón de Capas
 
-### 1. Clonar el repositorio
-
-```bash
-git clone <url-del-repositorio>
-cd microservicio-telegram
+```
+main.py
+    ↓
+TelegramAudioBot (Orquestador)
+    ↓
+┌─────────────┬─────────────┬─────────────┐
+│  Telegram   │Transcription│   Query     │
+│  Service    │  Service    │  Service    │
+└─────────────┴─────────────┴─────────────┘
 ```
 
-### 2. Crear entorno virtual (recomendado)
+### Patrón Callback
 
-```bash
-# Windows
-python -m venv venv
-venv\Scripts\activate
+El proyecto usa **callbacks** para mantener bajo acoplamiento:
 
-# Linux/Mac
-python3 -m venv venv
-source venv/bin/activate
+```python
+await telegram_service.start_polling(
+    audio_callback=bot.process_audio_message,  # Se ejecuta al detectar audio
+    text_callback=bot.process_text_message     # Se ejecuta al detectar texto
+)
 ```
 
-### 3. Instalar dependencias
+**Ventajas:**
+- Bajo acoplamiento (Service no depende del Bot)
+- Alta testabilidad
+- Servicios reutilizables
 
-```bash
-pip install -r requirements.txt
+---
+
+## Flujo Detallado del Sistema
+
+### 1. Inicio del Servicio
+
 ```
-
-### 4. Configurar variables de entorno
-
-Copia el archivo `.env.example` a `.env` y configura tus credenciales:
-
-```bash
-cp .env.example .env
-```
-
-Edita el archivo `.env` con tus valores:
-
-```env
-# Token del Bot de Telegram
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-
-# ID del chat/grupo de Telegram
-TELEGRAM_CHAT_ID=-1001234567890
-
-# URL de tu API de transcripcion
-TRANSCRIPTION_API_URL=https://tu-api.com/transcribe
-TRANSCRIPTION_API_KEY=tu_api_key
-
-# URL de tu sistema de queries
-QUERY_SYSTEM_URL=https://tu-sistema.com/query
-QUERY_SYSTEM_API_KEY=tu_query_key
-
-# Intervalo de polling en segundos (2-3 segundos)
-POLLING_INTERVAL=2.5
-
-# Nivel de logs (DEBUG, INFO, WARNING, ERROR)
-LOG_LEVEL=INFO
-```
-
-## Configuracion del Bot de Telegram
-
-### 1. Crear el Bot
-
-1. Abre Telegram y busca @BotFather
-2. Envia el comando `/newbot`
-3. Sigue las instrucciones para crear tu bot
-4. Guarda el **token** que te proporciona BotFather
-5. Copia este token en la variable `TELEGRAM_BOT_TOKEN` del archivo `.env`
-
-### 2. Obtener el Chat ID
-
-#### Opcion A: Para un grupo
-
-1. Agrega tu bot al grupo
-2. Envia un mensaje en el grupo
-3. Visita: `https://api.telegram.org/bot<TU_TOKEN>/getUpdates`
-4. Busca el campo `"chat":{"id":-1001234567890}`
-5. Copia este ID en la variable `TELEGRAM_CHAT_ID`
-
-#### Opcion B: Para chat privado
-
-1. Inicia una conversacion con tu bot
-2. Envia cualquier mensaje
-3. Visita: `https://api.telegram.org/bot<TU_TOKEN>/getUpdates`
-4. Busca tu `chat_id` en la respuesta
-5. Copialo en la variable `TELEGRAM_CHAT_ID`
-
-### 3. Permisos del Bot en el Grupo
-
-Si usas el bot en un grupo, asegurate de que tenga permisos para:
-- Leer mensajes
-- Enviar mensajes
-- Acceder a todos los mensajes (desactiva Privacy Mode en BotFather)
-
-Para desactivar Privacy Mode:
-1. Envia `/setprivacy` a @BotFather
-2. Selecciona tu bot
-3. Selecciona `Disable`
-
-## Uso
-
-### Ejecutar el microservicio
-
-```bash
 python main.py
+    ↓
+TelegramAudioBot.__init__()
+    ↓ Inicializa 3 servicios:
+    - TelegramService (maneja Telegram)
+    - TranscriptionService (transcribe audios)
+    - QueryService (envía a sistema externo)
+    ↓
+bot.start() → asyncio.run()
 ```
 
-El bot comenzara a hacer polling cada 2-3 segundos al grupo de Telegram configurado.
+### 2. Validación y Configuración
 
-### Flujo de Procesamiento
+```
+settings.validate()
+    ↓ Verifica que existan:
+    - TELEGRAM_BOT_TOKEN
+    - TELEGRAM_CHAT_ID
+    - TRANSCRIPTION_API_URL
+    - QUERY_SYSTEM_URL
+    ↓
+Si falta alguna, lanza ValueError y detiene el programa
+```
 
-1. **Deteccion**: El bot detecta mensajes con audio o notas de voz
-2. **Descarga**: Descarga el archivo de audio localmente
-3. **Transcripcion**: Envia el audio a la API de transcripcion
-4. **Query**: Envia la transcripcion al sistema de queries
-5. **Respuesta**: Notifica al usuario en Telegram sobre el resultado
-6. **Limpieza**: Elimina el archivo de audio temporal
+### 3. Ciclo de Polling
 
-### Ejemplo de Interaccion
+```
+Cada 2.5 segundos (configurable):
+    ↓
+get_updates(offset=last_update_id + 1)
+    ↓
+Recibe lista de updates (mensajes nuevos)
+    ↓
+Procesa cada mensaje en orden cronológico:
+    ├── ¿Tiene "voice" o "audio"? → Procesa como audio
+    └── ¿Tiene "text"? → Procesa como texto
 
-1. Usuario envia una nota de voz en el grupo
-2. Bot procesa el audio
-3. Bot responde con:
-   ```
-   Audio procesado correctamente
+(Mantiene el orden cronológico de los mensajes)
+```
 
-   Transcripcion: [texto del audio]
-   ```
+### 4A. Flujo de Mensajes de AUDIO
 
-## Estructura de las APIs
+```
+Usuario envía audio en Telegram
+    ↓
+TelegramService detecta mensaje con "voice" o "audio"
+    ↓
+Crea objeto TelegramAudioMessage (Pydantic)
+    ↓
+【PASO 1: DESCARGA】
+download_audio(file_id)
+    ↓ GET /bot{TOKEN}/getFile
+    ↓ GET archivo desde Telegram
+    ↓ Guarda en: temp_audio/{file_id}.ogg
+    ↓
+【PASO 2: TRANSCRIPCIÓN】
+transcription_service.transcribe_audio(file_path)
+    ↓ POST {TRANSCRIPTION_API_URL}
+    ↓ Respuesta: {"text": "texto transcrito"}
+    ↓
+【PASO 3: QUERY AL SISTEMA】
+session_id = f"telegram-group-{chat_id}"
+    ↓
+query_service.send_query(transcription, session_id)
+    ↓ POST {QUERY_SYSTEM_URL}
+    ↓ Body: {"question": "...", "session_id": "..."}
+    ↓ Respuesta: {"success": true, "answer": "..."}
+    ↓
+【PASO 4: RESPUESTA EN TELEGRAM】
+telegram_service.send_message()
+    ↓ POST /bot{TOKEN}/sendMessage
+    ↓ "🎤 Audio: {transcription}\n\n💬 Respuesta: {answer}"
+    ↓
+【PASO 5: LIMPIEZA】
+cleanup_audio_file(temp_audio/{file_id}.ogg)
+```
 
-### API de Transcripcion
+### 4B. Flujo de Mensajes de TEXTO
 
-El servicio espera una API que reciba audio y retorne texto. Ejemplo:
+```
+Usuario envía texto en Telegram
+    ↓
+TelegramService detecta mensaje con "text"
+    ↓
+Crea objeto TelegramTextMessage (Pydantic)
+    ↓
+【SALTA TRANSCRIPCIÓN - VA DIRECTO A QUERY】
+session_id = f"telegram-group-{chat_id}"
+    ↓
+query_service.send_query(text, session_id)
+    ↓ POST {QUERY_SYSTEM_URL}
+    ↓ Body: {"question": "...", "session_id": "..."}
+    ↓
+【RESPUESTA EN TELEGRAM】
+telegram_service.send_message()
+    ↓ Responde directamente con el answer
+```
+
+### 5. Gestión de Errores
+
+```
+En cada paso, si hay error:
+    ↓ logger.error(f"Descripción: {e}")
+    ↓ send_message("❌ Error: {descripción}")
+    ↓ cleanup (si hay archivos temporales)
+    ↓ continue (no detiene el bot)
+```
+
+---
+
+## APIs Externas
+
+### API de Transcripción
 
 **Request:**
-```bash
-POST /transcribe
+```http
+POST {TRANSCRIPTION_API_URL}
 Content-Type: multipart/form-data
-Authorization: Bearer <API_KEY>
 
-audio: <archivo_de_audio>
+audio: <archivo.ogg>
 ```
 
-**Response:**
+**Response esperada:**
 ```json
 {
-  "transcription": "Texto transcrito del audio"
+  "text": "Texto transcrito del audio"
 }
 ```
 
 ### API de Queries
 
-El servicio envia la transcripcion como query. Ejemplo:
-
 **Request:**
-```bash
-POST /query
+```http
+POST {QUERY_SYSTEM_URL}
 Content-Type: application/json
-Authorization: Bearer <API_KEY>
 
 {
-  "query": "Texto transcrito",
-  "source": "telegram_bot",
-  "metadata": {
-    "telegram_user": "username",
-    "message_id": 12345,
-    "chat_id": -1001234567890,
-    "audio_duration": 10,
-    "timestamp": 1234567890
-    }
+  "question": "Texto de la pregunta o transcripción",
+  "session_id": "telegram-group-123456789"
 }
 ```
 
-## Personalizacion
-
-### Ajustar el intervalo de polling
-
-Modifica `POLLING_INTERVAL` en el archivo `.env`:
-
-```env
-POLLING_INTERVAL=3.0  # 3 segundos
+**Response esperada:**
+```json
+{
+  "success": true,
+  "answer": "Respuesta del sistema"
+}
 ```
 
-### Modificar el formato de respuesta de las APIs
+---
 
-Si tus APIs tienen una estructura diferente, edita:
+## Aspectos Técnicos Importantes
 
-- `src/services/transcription_service.py:46-48` para cambiar como se extrae la transcripcion
-- `src/services/query_service.py:24-30` para cambiar el formato del payload
+### Session Management
+- Cada grupo de Telegram tiene su propio `session_id`: `telegram-group-{chat_id}`
+- Permite mantener contexto de conversación en el sistema de queries
+- Múltiples usuarios en el mismo grupo comparten la misma sesión
 
-### Cambiar el nivel de logs
+### Archivos Temporales
+- Ubicación: `temp_audio/`
+- Nombre: `{file_id}.ogg`
+- Se eliminan inmediatamente después de procesar (éxito o error)
+- El directorio se crea automáticamente si no existe
 
-```env
-LOG_LEVEL=DEBUG  # Para mas informacion
-LOG_LEVEL=ERROR  # Para menos informacion
+### Polling Strategy
+- Usa `offset = last_update_id + 1` para evitar procesar el mismo mensaje dos veces
+- **Procesamiento en orden cronológico:** Los mensajes se procesan en el mismo orden que llegan de Telegram
+- Procesamiento secuencial (un mensaje a la vez) para mantener el contexto
+- Intervalo configurable vía `POLLING_INTERVAL` (default: 2.5s)
+
+### Datos del Usuario
+- **Extraídos:** `user_id`, `username`, `first_name`, `last_name`
+- **Enviados al sistema:** Solo el `chat_id` (dentro del `session_id`)
+- **Usados para logs:** `user.get_display_name()`
+
 ```
 
-## Solucion de Problemas
+---
+
+## Troubleshooting
 
 ### El bot no recibe mensajes
-
-1. Verifica que el token sea correcto
-2. Asegurate de que Privacy Mode este desactivado
-3. Confirma que el bot este en el grupo y tenga permisos
+1. Verifica el token: `curl https://api.telegram.org/bot<TOKEN>/getMe`
+2. Desactiva Privacy Mode en @BotFather
+3. Confirma que el bot esté en el grupo
 
 ### Error al transcribir
-
-1. Verifica que la URL de la API sea correcta
-2. Confirma que la API este funcionando
-3. Revisa que el formato del archivo de audio sea compatible
+- Verifica `TRANSCRIPTION_API_URL` en `.env`
+- Confirma que la API esté funcionando
 
 ### Error al enviar queries
+- Verifica `QUERY_SYSTEM_URL` en `.env`
+- Revisa los logs para más detalles
 
-1. Verifica la URL del sistema de queries
-2. Confirma que el formato del payload sea el esperado
-3. Revisa los logs para mas detalles
+---
 
-## Logs
+## Notas
 
-Los logs se muestran en la consola con el siguiente formato:
-
-```
-2025-10-15 10:30:45 - telegram_service - INFO - Audio descargado: temp_audio/xyz.ogg
-2025-10-15 10:30:47 - transcription_service - INFO - Transcripcion exitosa: Hola mundo...
-2025-10-15 10:30:48 - query_service - INFO - Query enviada exitosamente
-```
-
-## Despliegue en Produccion
-
-### Usando systemd (Linux)
-
-Crea un archivo de servicio en `/etc/systemd/system/telegram-bot.service`:
-
-```ini
-[Unit]
-Description=Telegram Audio Bot
-After=network.target
-
-[Service]
-Type=simple
-User=tu_usuario
-WorkingDirectory=/ruta/al/proyecto
-Environment="PATH=/ruta/al/venv/bin"
-ExecStart=/ruta/al/venv/bin/python main.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Habilita e inicia el servicio:
-
-```bash
-sudo systemctl enable telegram-bot
-sudo systemctl start telegram-bot
-sudo systemctl status telegram-bot
-```
-
-### Usando Docker
-
-Puedes crear un `Dockerfile` para contenerizar el servicio:
-
-```dockerfile
-FROM python:3.9-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-```
-
-```bash
-docker build -t telegram-bot .
-docker run -d --env-file .env telegram-bot
-```
-
-## Seguridad
-
-- Nunca subas el archivo `.env` a un repositorio publico
-- Usa variables de entorno en produccion
-- Rota tus API keys regularmente
-- Limita los permisos del bot al minimo necesario
-
-## Contribuir
-
-1. Fork el proyecto
-2. Crea una rama para tu feature (`git checkout -b feature/nueva-funcionalidad`)
-3. Commit tus cambios (`git commit -m 'Agregar nueva funcionalidad'`)
-4. Push a la rama (`git push origin feature/nueva-funcionalidad`)
-5. Abre un Pull Request
-
-## Licencia
-
-Este proyecto esta bajo la licencia MIT.
-
-## Soporte
-
-Para reportar problemas o sugerencias, abre un issue en el repositorio.
+- Requiere Python 3.9+ para type hints modernos (`dict[str, int]`)
+- El bot NO detiene el programa si hay errores, continúa procesando mensajes
+- Los mensajes de error se envían como respuestas en Telegram

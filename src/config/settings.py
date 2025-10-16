@@ -1,4 +1,5 @@
 import os
+from typing import cast
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -8,21 +9,21 @@ class Settings:
     """Configuración centralizada del microservicio"""
 
     # Telegram Bot
-    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+    TELEGRAM_BOT_TOKEN: str = os.getenv('TELEGRAM_BOT_TOKEN')  # type: ignore
+    TELEGRAM_CHAT_ID: str = os.getenv('TELEGRAM_CHAT_ID')  # type: ignore
 
     # APIs externas
-    TRANSCRIPTION_API_URL = os.getenv('TRANSCRIPTION_API_URL')
+    TRANSCRIPTION_API_URL: str = os.getenv('TRANSCRIPTION_API_URL')  # type: ignore
     #TRANSCRIPTION_API_KEY = os.getenv('TRANSCRIPTION_API_KEY')
 
-    QUERY_SYSTEM_URL = os.getenv('QUERY_SYSTEM_URL')
+    QUERY_SYSTEM_URL: str = os.getenv('QUERY_SYSTEM_URL')  # type: ignore
     #QUERY_SYSTEM_API_KEY = os.getenv('QUERY_SYSTEM_API_KEY')
 
     # Configuración del polling
-    POLLING_INTERVAL = float(os.getenv('POLLING_INTERVAL', 2.5))
+    POLLING_INTERVAL: float = float(os.getenv('POLLING_INTERVAL', 2.5))
 
     # Configuración de logs
-    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+    LOG_LEVEL: str = os.getenv('LOG_LEVEL', 'INFO')  # type: ignore
 
     @classmethod
     def validate(cls):
