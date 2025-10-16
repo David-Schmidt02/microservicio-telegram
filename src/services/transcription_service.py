@@ -1,4 +1,4 @@
-import requests
+import aiohttp
 from typing import Optional
 from src.config.settings import settings
 from src.utils.logger import setup_logger
@@ -11,99 +11,47 @@ class TranscriptionService:
 
     def __init__(self):
         self.api_url = settings.TRANSCRIPTION_API_URL
+        self._session: Optional[aiohttp.ClientSession] = None
         #self.api_key = settings.TRANSCRIPTION_API_KEY
 
-    def transcribe_audio(self, audio_file_path: str) -> Optional[str]:
-        """
-        Transcribe un archivo de audio usando la API de transcripción
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Obtiene o crea la sesión de aiohttp."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
-        Args:
-            audio_file_path: Ruta local del archivo de audio
+    async def close(self):
+        """Cierra la sesión de aiohttp."""
+        if self._session and not self._session.closed:
+            await self._session.close()
 
-        Returns:
-            Texto transcrito o None si falla
-        """
-        try:
-            # Preparar headers con API key si existe
-            headers = {}
-            #if self.api_key:
-            #    headers['Authorization'] = f'Bearer {self.api_key}'
+    async def transcribe_audio(self, audio_file_path: str, retries: int = 0) -> str:
+        """Transcribe un archivo de audio usando la API externa."""
+        headers = {}
+        #if self.api_key:
+        #    headers['Authorization'] = f'Bearer {self.api_key}'
 
-            # Abrir el archivo de audio
-            with open(audio_file_path, 'rb') as audio_file:
-                files = {
-                    'audio': (audio_file_path, audio_file, 'audio/ogg')
-                }
+        logger.info(f"Enviando audio a transcribir: {audio_file_path}")
 
-                # Enviar request a la API de transcripción
-                logger.info(f"Enviando audio a transcribir: {audio_file_path}")
-                response = requests.post(
-                    self.api_url,
-                    files=files,
-                    headers=headers,
-                    timeout=60
-                )
+        session = await self._get_session()
 
-                response.raise_for_status()
-                data = response.json()
+        with open(audio_file_path, 'rb') as audio_file:
+            data = aiohttp.FormData()
+            data.add_field('audio', audio_file, filename=audio_file_path, content_type='audio/ogg')
 
-                # Extraer el texto transcrito
-                # Ajusta este campo según la estructura de respuesta de tu API
-                transcription = data.get('transcription') or data.get('text') or data.get('transcript')
-
-                if transcription:
-                    logger.info(f"Transcripción exitosa: {transcription[:100]}...")
-                    return transcription
-                else:
-                    logger.error(f"No se encontró transcripción en la respuesta: {data}")
-                    return None
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error en la API de transcripción: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Error al transcribir audio: {e}")
-            return None
-
-    def transcribe_audio_base64(self, audio_base64: str) -> Optional[str]:
-        """
-        Transcribe un audio en formato base64 (alternativa)
-
-        Args:
-            audio_base64: Audio codificado en base64
-
-        Returns:
-            Texto transcrito o None si falla
-        """
-        try:
-            headers = {'Content-Type': 'application/json'}
-            #if self.api_key:
-            #    headers['Authorization'] = f'Bearer {self.api_key}'
-
-            payload = {
-                'audio': audio_base64
-            }
-
-            logger.info("Enviando audio en base64 a transcribir")
-            response = requests.post(
+            async with session.post(
                 self.api_url,
-                json=payload,
+                data=data,
                 headers=headers,
-                timeout=60
-            )
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                response.raise_for_status()
+                result = await response.json()
 
-            response.raise_for_status()
-            data = response.json()
+                transcription = result.get('transcription')
 
-            transcription = data.get('transcription') or data.get('text') or data.get('transcript')
+                if not transcription:
+                    raise ValueError(f"No 'transcription' field in API response: {result}")
 
-            if transcription:
                 logger.info(f"Transcripción exitosa: {transcription[:100]}...")
                 return transcription
-            else:
-                logger.error(f"No se encontró transcripción en la respuesta: {data}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error al transcribir audio base64: {e}")
-            return None
