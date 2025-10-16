@@ -28,13 +28,13 @@ class TelegramAudioBot:
         session_id = f"telegram-group-{text_message.chat.chat_id}"
         logger.info("PASO 3 - process_text_message")
         # Paso 1: Enviar query con la session_id del chat
-        result = self.query_service.send_query(text_message.text, session_id)
+        result = await self.query_service.send_query(text_message.text, session_id)
         
         # Paso 2: Obtener la respuesta
         answer = result.get('answer', 'No se obtuvo respuesta')
 
         # Paso 3: Enviar la respuesta al chat
-        self.telegram_service.send_message(
+        await self.telegram_service.send_message(
             f"{answer}",
             reply_to_message_id=text_message.message_id
         )
@@ -47,18 +47,18 @@ class TelegramAudioBot:
         logger.info(f"Procesando mensaje de audio de {user_display}")
 
         # Paso 1: Descargar el audio
-        audio_file_path = self.telegram_service.download_audio(audio_message.file_id)
+        audio_file_path = await self.telegram_service.download_audio(audio_message.file_id)
         logger.info("PASO 3 - process_audio_message")
         # Paso 2: Transcribir el audio
-        transcription = self.transcription_service.transcribe_audio(audio_file_path)
+        transcription = await self.transcription_service.transcribe_audio(audio_file_path)
 
         # Paso 3: Enviar query al sistema
         session_id = f"telegram-group-{audio_message.chat.chat_id}"
-        result = self.query_service.send_query(transcription, session_id)
+        result = await self.query_service.send_query(transcription, session_id)
 
         answer = result.get('answer', 'No se obtuvo respuesta')
 
-        self.telegram_service.send_message(
+        await self.telegram_service.send_message(
             f"🎤 Audio: {transcription}\n\n💬 Respuesta: {answer}",
             reply_to_message_id=audio_message.message_id
         )
@@ -98,3 +98,10 @@ class TelegramAudioBot:
             logger.info("\n\nBot detenido por el usuario")
         except Exception as e:
             logger.error(f"Error fatal: {e}")
+        finally:
+            # Cerrar todas las sesiones de aiohttp
+            logger.info("Cerrando conexiones...")
+            await self.telegram_service.close()
+            await self.transcription_service.close()
+            await self.query_service.close()
+            logger.info("Conexiones cerradas correctamente")

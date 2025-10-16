@@ -1,4 +1,5 @@
-import requests
+import aiohttp
+from typing import Optional
 from src.config.settings import settings
 from src.utils.logger import setup_logger
 
@@ -10,9 +11,21 @@ class TranscriptionService:
 
     def __init__(self):
         self.api_url = settings.TRANSCRIPTION_API_URL
+        self._session: Optional[aiohttp.ClientSession] = None
         #self.api_key = settings.TRANSCRIPTION_API_KEY
 
-    def transcribe_audio(self, audio_file_path: str) -> str:
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Obtiene o crea la sesión de aiohttp."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self):
+        """Cierra la sesión de aiohttp."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    async def transcribe_audio(self, audio_file_path: str, retries: int = 0) -> str:
         """Transcribe un archivo de audio usando la API externa."""
         headers = {}
         #if self.api_key:
@@ -20,24 +33,25 @@ class TranscriptionService:
 
         logger.info(f"Enviando audio a transcribir: {audio_file_path}")
 
+        session = await self._get_session()
+
         with open(audio_file_path, 'rb') as audio_file:
-            files = {
-                'audio': (audio_file_path, audio_file, 'audio/ogg')
-            }
+            data = aiohttp.FormData()
+            data.add_field('audio', audio_file, filename=audio_file_path, content_type='audio/ogg')
 
-            response = requests.post(
+            async with session.post(
                 self.api_url,
-                files=files,
+                data=data,
                 headers=headers,
-                timeout=60
-            )
-            response.raise_for_status()
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                response.raise_for_status()
+                result = await response.json()
 
-            data = response.json()
-            transcription = data.get('transcription')
+                transcription = result.get('transcription')
 
-            if not transcription:
-                raise ValueError(f"No 'transcription' field in API response: {data}")
+                if not transcription:
+                    raise ValueError(f"No 'transcription' field in API response: {result}")
 
-            logger.info(f"Transcripción exitosa: {transcription[:100]}...")
-            return transcription
+                logger.info(f"Transcripción exitosa: {transcription[:100]}...")
+                return transcription

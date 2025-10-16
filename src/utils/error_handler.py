@@ -2,7 +2,7 @@
 Middleware para manejo centralizado de errores en callbacks de Telegram.
 Similar a los error handlers de Express.js
 """
-import requests
+import aiohttp
 from functools import wraps
 from typing import Callable
 from src.utils.logger import setup_logger
@@ -36,36 +36,35 @@ def handle_telegram_errors(cleanup_audio: bool = False):
 
             except FileNotFoundError as e:
                 logger.error(f"Archivo no encontrado: {e}")
-                self.telegram_service.send_message(
+                await self.telegram_service.send_message(
                     "❌ Error: Archivo no encontrado",
                     reply_to_message_id=message.message_id
                 )
 
-            except requests.HTTPError as e:
+            except aiohttp.ClientResponseError as e:
                 logger.error(f"Error HTTP de API: {e}")
-                status = getattr(e.response, 'status_code', 'desconocido')
-                self.telegram_service.send_message(
-                    f"❌ Error de conexión con API (HTTP {status})",
+                await self.telegram_service.send_message(
+                    f"❌ Error de conexión con API (HTTP {e.status})",
                     reply_to_message_id=message.message_id
                 )
 
-            except requests.Timeout as e:
-                logger.error(f"Timeout de API: {e}")
-                self.telegram_service.send_message(
-                    "⏱️ Error: La API tardó demasiado en responder",
+            except aiohttp.ClientError as e:
+                logger.error(f"Error de conexión con API: {e}")
+                await self.telegram_service.send_message(
+                    "⏱️ Error: La API tardó demasiado en responder o falló la conexión",
                     reply_to_message_id=message.message_id
                 )
 
             except ValueError as e:
                 logger.error(f"Error de validación: {e}")
-                self.telegram_service.send_message(
+                await self.telegram_service.send_message(
                     f"⚠️ Error al procesar: {str(e)}",
                     reply_to_message_id=message.message_id
                 )
 
             except Exception as e:
                 logger.error(f"Error inesperado en {func.__name__}: {e}", exc_info=True)
-                self.telegram_service.send_message(
+                await self.telegram_service.send_message(
                     f"💥 Error inesperado: {str(e)}",
                     reply_to_message_id=message.message_id
                 )

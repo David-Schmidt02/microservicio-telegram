@@ -1,5 +1,5 @@
 import asyncio
-import requests
+import aiohttp
 import os
 from typing import Optional, List
 from src.config.settings import settings
@@ -18,66 +18,87 @@ class TelegramService:
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.last_update_id = 0
         self.temp_audio_dir = "temp_audio"
+        self._session: Optional[aiohttp.ClientSession] = None
 
         if not os.path.exists(self.temp_audio_dir):
             os.makedirs(self.temp_audio_dir)
 
-    def get_updates(self, offset: Optional[int] = None) -> list:
-        """Obtiene las actualizaciones del bot de Telegram."""
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Obtiene o crea la sesión de aiohttp."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
+    async def close(self):
+        """Cierra la sesión de aiohttp."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    async def get_updates(self, offset: Optional[int] = None) -> list:
+        """Obtiene las actualizaciones del bot de Telegram."""
         url = f"{self.base_url}/getUpdates"
-        params = {
-            "timeout": 0, # le especifico un polling a telegram (ya lo hacemos con un sleep en el bot)
-            "offset": offset
+        params: dict[str, int] = {
+            "timeout": 0,  # le especifico un polling a telegram (ya lo hacemos con un sleep en el bot)
         }
 
+        # Solo agregar offset si no es None (aiohttp no acepta None como valor)
+        if offset is not None:
+            params["offset"] = offset
+
         try:
-            response = requests.get(url, params=params, timeout=5)
-            response.raise_for_status()
-            data = response.json()
+            session = await self._get_session()
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                response.raise_for_status()
+                data = await response.json()
 
-            if data.get("ok"):
-                return data.get("result", [])
-            else:
-                logger.error(f"Error en getUpdates: {data}")
-                return []
+                if data.get("ok"):
+                    return data.get("result", [])
+                else:
+                    logger.error(f"Error en getUpdates: {data}")
+                    return []
 
-        except requests.exceptions.RequestException as e:
+        except aiohttp.ClientError as e:
             logger.error(f"Error al obtener actualizaciones de Telegram: {e}")
             return []
+        except asyncio.TimeoutError as e:
+            logger.error(f"Timeout al obtener actualizaciones de Telegram: {e}")
+            return []
 
-    def download_audio(self, file_id: str) -> str:
+    async def download_audio(self, file_id: str, retries: int = 0) -> str:
         """Descarga un archivo de audio de Telegram."""
         # Obtener información del archivo
         file_info_url = f"{self.base_url}/getFile"
         params = {"file_id": file_id}
 
-        response = requests.get(file_info_url, params=params)
-        response.raise_for_status()
-        data = response.json()
+        session = await self._get_session()
 
-        if not data.get("ok"):
-            raise ValueError(f"Telegram API error: {data}")
+        async with session.get(file_info_url, params=params) as response:
+            response.raise_for_status()
+            data = await response.json()
 
-        file_path = data["result"]["file_path"]
+            if not data.get("ok"):
+                raise ValueError(f"Telegram API error: {data}")
+
+            file_path = data["result"]["file_path"]
 
         # Descargar el archivo
         download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-        audio_response = requests.get(download_url, timeout=30)
-        audio_response.raise_for_status()
+        async with session.get(download_url, timeout=aiohttp.ClientTimeout(total=30)) as audio_response:
+            audio_response.raise_for_status()
+            audio_content = await audio_response.read()
 
         # Guardar archivo localmente
         local_file_path = os.path.join(self.temp_audio_dir, f"{file_id}.ogg")
         with open(local_file_path, 'wb') as f:
-            f.write(audio_response.content)
+            f.write(audio_content)
 
         logger.info(f"Audio descargado: {local_file_path}")
         return local_file_path
 
-    def send_message(self, text: str, reply_to_message_id: Optional[int] = None) -> bool:
+    async def send_message(self, text: str, reply_to_message_id: Optional[int] = None, retries: int = 0) -> bool:
         """Envía un mensaje al chat configurado."""
         url = f"{self.base_url}/sendMessage"
-        payload: dict[str, str | int] = { # Diccionario con claves str y valores str o int
+        payload: dict[str, str | int] = {  # Diccionario con claves str y valores str o int
             "chat_id": self.chat_id,
             "text": text
         }
@@ -86,9 +107,11 @@ class TelegramService:
             payload["reply_to_message_id"] = reply_to_message_id
 
         try:
-            response = requests.post(url, json=payload, timeout=1)
-            response.raise_for_status()
-            return response.json().get("ok", False)
+            session = await self._get_session()
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return data.get("ok", False)
 
         except Exception as e:
             logger.error(f"Error al enviar mensaje: {e}")
@@ -122,7 +145,7 @@ class TelegramService:
             try:
                 # Obtener actualizaciones
                 offset = self.last_update_id + 1 if self.last_update_id > 0 else None
-                updates = self.get_updates(offset)
+                updates = await self.get_updates(offset)
                 logger.info("PASO 1 - get_updates")
                 if updates:
                     # Actualizar el último update_id

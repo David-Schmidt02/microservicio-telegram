@@ -180,7 +180,7 @@ download_audio(file_id)
 【PASO 2: TRANSCRIPCIÓN】
 transcription_service.transcribe_audio(file_path)
     ↓ POST {TRANSCRIPTION_API_URL}
-    ↓ Respuesta: {"text": "texto transcrito"}
+    ↓ Respuesta: {"transcription": "texto transcrito"}
     ↓
 【PASO 3: QUERY AL SISTEMA】
 session_id = f"telegram-group-{chat_id}"
@@ -247,7 +247,7 @@ audio: <archivo.ogg>
 **Response esperada:**
 ```json
 {
-  "text": "Texto transcrito del audio"
+  "transcription": "Texto transcrito del audio"
 }
 ```
 
