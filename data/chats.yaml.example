@@ -1,0 +1,35 @@
+# Archivo de whitelist de chats
+# Los chat_id son estables:
+#   - Chats privados: números positivos
+#   - Grupos/Supergrupos: números negativos
+# Nunca se reciclan, son permanentes
+
+chats:
+  # Ejemplo de grupo autorizado
+  - chat_id: -4871163359
+    title: "Mi Grupo de Trabajo"
+    type: "supergroup"
+    is_allowed: true
+    created_at: "2025-10-16T14:00:00"
+    updated_at: "2025-10-16T14:00:00"
+
+  # Ejemplo de chat privado autorizado
+  - chat_id: 123456789
+    title: null
+    type: "private"
+    is_allowed: true
+    created_at: "2025-10-16T14:05:00"
+    updated_at: "2025-10-16T14:05:00"
+
+  # Ejemplo de grupo NO autorizado
+  - chat_id: -9876543210
+    title: "Grupo de Pruebas"
+    type: "group"
+    is_allowed: false
+    created_at: "2025-10-16T14:10:00"
+    updated_at: "2025-10-16T14:10:00"
+
+# Para obtener el chat_id:
+# 1. Envía un mensaje en el chat/grupo al bot
+# 2. Revisa los logs, verás: "Chat <chat_id> no autorizado"
+# 3. Agrega ese chat_id aquí con is_allowed: true

@@ -7,11 +7,15 @@ Microservicio en Python que procesa mensajes de audio y texto en grupos de Teleg
 - Bot de Telegram con polling cada 2-3 segundos (configurable)
 - Detección automática de mensajes de audio/voz y texto
 - Transcripción de audio mediante API externa
-- Procesamiento asíncrono con asyncio
+- Procesamiento asíncrono con asyncio y aiohttp
 - Manejo de sesiones por grupo de Telegram
+- **Sistema de whitelist** para usuarios y chats (YAML → SQLite → SQL)
+- **División automática de mensajes largos** que exceden el límite de 4096 caracteres de Telegram
+- **Formateo inteligente de incidentes** desde respuestas del MCP server de búsqueda
 - Validación de datos con Pydantic
 - Logging detallado con niveles configurables
 - Limpieza automática de archivos temporales
+- Arquitectura preparada para migración de persistencia
 
 ---
 
@@ -53,7 +57,54 @@ LOG_LEVEL=INFO
 5. Copia el `chat.id` en `TELEGRAM_CHAT_ID`
 6. **Importante:** Desactiva Privacy Mode enviando `/setprivacy` a @BotFather
 
-### 4. Ejecutar
+### 4. Configurar Whitelist (Control de Acceso)
+
+El bot solo procesa mensajes de usuarios y chats autorizados. Para configurar:
+
+**Opción A: Usando el script helper (recomendado)**
+```bash
+python scripts/add_to_whitelist.py
+```
+Sigue las opciones del menú interactivo para agregar usuarios y chats.
+
+**Opción B: Editando YAML manualmente**
+
+1. Copia los archivos de ejemplo:
+```bash
+cp data/users.yaml.example data/users.yaml
+cp data/chats.yaml.example data/chats.yaml
+```
+
+2. Edita `data/users.yaml` y agrega tus usuarios:
+```yaml
+users:
+  - user_id: 123456789  # Tu Telegram user ID
+    username: "tu_usuario"
+    first_name: "Tu Nombre"
+    is_allowed: true
+    created_at: "2025-10-16T14:00:00"
+    updated_at: "2025-10-16T14:00:00"
+```
+
+3. Edita `data/chats.yaml` y agrega tus chats/grupos:
+```yaml
+chats:
+  - chat_id: -1001234567890  # ID de tu grupo
+    title: "Mi Grupo"
+    type: "supergroup"
+    is_allowed: true
+    created_at: "2025-10-16T14:00:00"
+    updated_at: "2025-10-16T14:00:00"
+```
+
+**¿Cómo obtengo los IDs?**
+- Ejecuta el bot sin configurar whitelist
+- Envía un mensaje
+- Revisa los logs: verás los user_id y chat_id que intentaron acceder
+
+Ver `data/README.md` para más detalles.
+
+### 5. Ejecutar
 
 ```bash
 python main.py
@@ -66,20 +117,38 @@ python main.py
 ```
 microservicio-telegram/
 ├── src/
-│   ├── bot.py                      # Orquestador principal (TelegramAudioBot)
-│   ├── schemas.py                  # Modelos Pydantic para validación
-│   ├── config/
-│   │   └── settings.py             # Configuración centralizada
+│   ├── bot.py                          # Orquestador principal (TelegramAudioBot)
+│   ├── schemas.py                      # DTOs de Telegram (Pydantic)
+│   ├── models/                         # 🆕 Modelos de dominio
+│   │   ├── user.py                     #   - Entidad User
+│   │   └── chat.py                     #   - Entidad Chat
+│   ├── repositories/                   # 🆕 Capa de persistencia
+│   │   ├── base_repository.py          #   - Interfaz abstracta
+│   │   ├── user_repository.py          #   - Implementación YAML para users
+│   │   └── chat_repository.py          #   - Implementación YAML para chats
 │   ├── services/
-│   │   ├── telegram_service.py     # Cliente de Telegram API
-│   │   ├── transcription_service.py # Servicio de transcripción
-│   │   ├── query_service.py        # Servicio de queries
-│   │   └── user_service.py         # Gestión de usuarios
+│   │   ├── telegram_service.py         # Cliente de Telegram API (async)
+│   │   ├── transcription_service.py    # Servicio de transcripción (async)
+│   │   ├── query_service.py            # Servicio de queries (async)
+│   │   └── authorization_service.py    # 🆕 Lógica de whitelist
+│   ├── config/
+│   │   └── settings.py                 # Configuración centralizada
 │   └── utils/
-│       └── logger.py               # Configuración de logging
-├── temp_audio/                     # Archivos temporales (auto-creado)
-├── main.py                         # Punto de entrada
-└── requirements.txt
+│       ├── logger.py                   # Configuración de logging
+│       ├── error_handler.py            # Decorador de manejo de errores
+│       └── retry.py                    # 🆕 Helper de reintentos async
+├── data/                               # 🆕 Persistencia (YAML)
+│   ├── users.yaml                      #   - Whitelist de usuarios
+│   ├── chats.yaml                      #   - Whitelist de chats
+│   ├── users.yaml.example              #   - Ejemplo de users
+│   ├── chats.yaml.example              #   - Ejemplo de chats
+│   └── README.md                       #   - Documentación
+├── scripts/                            # 🆕 Scripts de utilidad
+│   └── add_to_whitelist.py             #   - Gestión interactiva de whitelist
+├── temp_audio/                         # Archivos temporales (auto-creado)
+├── main.py                             # Punto de entrada
+├── requirements.txt
+└── README.md
 ```
 
 ---
@@ -91,13 +160,29 @@ microservicio-telegram/
 ```
 main.py
     ↓
-TelegramAudioBot (Orquestador)
+TelegramAudioBot (Application Service / Orquestador)
     ↓
-┌─────────────┬─────────────┬─────────────┐
-│  Telegram   │Transcription│   Query     │
-│  Service    │  Service    │  Service    │
-└─────────────┴─────────────┴─────────────┘
+┌──────────────┬───────────────┬────────────┬────────────────────┐
+│  Telegram    │Transcription  │   Query    │  Authorization     │
+│  Service     │  Service      │  Service   │  Service           │
+└──────────────┴───────────────┴────────────┴─────────┬──────────┘
+                                                       ↓
+                                            ┌──────────────────────┐
+                                            │  Repository Layer     │
+                                            │  (UserRepo, ChatRepo) │
+                                            └──────────┬────────────┘
+                                                       ↓
+                                            ┌──────────────────────┐
+                                            │   Persistencia        │
+                                            │  (YAML → SQLite → SQL)│
+                                            └───────────────────────┘
 ```
+
+**Capas:**
+- **Application Service**: Orquesta los servicios (TelegramAudioBot)
+- **Service Layer**: Lógica de negocio (validación, transformación)
+- **Repository Layer**: Abstracción de persistencia (cambiar fácilmente entre YAML/SQLite/SQL)
+- **Persistencia**: Almacenamiento de datos
 
 ### Patrón Callback
 
@@ -214,10 +299,24 @@ session_id = f"telegram-group-{chat_id}"
 query_service.send_query(text, session_id)
     ↓ POST {QUERY_SYSTEM_URL}
     ↓ Body: {"question": "...", "session_id": "..."}
+    ↓ Response: {"answer": "...", "mcp_server_used": "...", "metadata": {...}}
     ↓
-【RESPUESTA EN TELEGRAM】
-telegram_service.send_message()
-    ↓ Responde directamente con el answer
+【PROCESAMIENTO DE RESPUESTA】
+_get_search_incidents(result)
+    ↓ Verifica si mcp_server_used == 'search'
+    ↓ Extrae metadata.results.incidentes si existen
+    ↓
+Si hay incidentes:
+    ↓ Envía resumen (primeros ~60 chars)
+    ↓ Envía cada incidente formateado individualmente
+
+Si NO hay incidentes:
+    ↓ Envía respuesta normal con el answer completo
+    ↓
+【DIVISIÓN AUTOMÁTICA SI ES NECESARIO】
+Si el mensaje supera 4096 caracteres:
+    ↓ _split_by_incidents() divide por "---"
+    ↓ _send_message_parts() envía cada parte con pausa de 0.5s
 ```
 
 ### 5. Gestión de Errores
@@ -268,9 +367,28 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "answer": "Respuesta del sistema"
+  "answer": "Respuesta del sistema",
+  "mcp_server_used": "search",
+  "metadata": {
+    "results": {
+      "incidentes": [
+        {
+          "descripcion": "...",
+          "fecha": "2025-10-17",
+          "horario_exacto": "12:44:13.857-03:00",
+          "direccion": "Calle X, 1234",
+          "barrio": "BARRIO",
+          "comuna": "COMUNA 1",
+          "comisaria": "CRIA VECINAL 1A",
+          "comentarios": "..."
+        }
+      ]
+    }
+  }
 }
 ```
+
+**Nota:** El campo `metadata.results.incidentes` es opcional y solo está presente cuando `mcp_server_used == 'search'`. En ese caso, el bot formatea y envía cada incidente como mensaje separado.
 
 ---
 
@@ -298,6 +416,30 @@ Content-Type: application/json
 - **Enviados al sistema:** Solo el `chat_id` (dentro del `session_id`)
 - **Usados para logs:** `user.get_display_name()`
 
+### Manejo de Mensajes Largos
+
+El bot maneja automáticamente respuestas que exceden el límite de 4096 caracteres de Telegram:
+
+1. **División por separadores**: `_split_by_incidents(text)` divide el mensaje usando "---" como separador
+2. **Envío secuencial**: `_send_message_parts(parts)` envía cada parte con pausa de 0.5s
+3. **Reply solo en primera parte**: Solo el primer mensaje responde (reply) al mensaje original del usuario
+4. **Logging**: Registra cuántas partes se enviaron
+
+### Formateo de Incidentes
+
+Cuando el sistema de queries usa el MCP server "search" y retorna incidentes:
+
+1. **Detección**: `_get_search_incidents(result)` verifica `mcp_server_used == 'search'` y extrae `metadata.results.incidentes`
+2. **Resumen**: Envía los primeros ~60 caracteres del `answer` como resumen
+3. **Formateo individual**: `_format_incident(incidente, numero)` formatea cada incidente con:
+   - Número de incidente
+   - Descripción
+   - Fecha y hora exacta
+   - Ubicación (dirección, barrio, comuna)
+   - Comisaría (si existe)
+   - Comentarios adicionales (si existen)
+4. **Envío separado**: Cada incidente se envía como mensaje individual
+
 ```
 
 ---
@@ -316,6 +458,16 @@ Content-Type: application/json
 ### Error al enviar queries
 - Verifica `QUERY_SYSTEM_URL` en `.env`
 - Revisa los logs para más detalles
+
+### Error 400 Bad Request al enviar mensajes
+- El bot ahora divide automáticamente mensajes largos por "---"
+- Si aún falla, verifica que cada incidente individual no exceda 4096 caracteres
+- Revisa los logs para ver cuántas partes se intentaron enviar
+
+### Los incidentes no se muestran formateados
+- Verifica que el query system retorne `mcp_server_used: "search"`
+- Confirma que existe el campo `metadata.results.incidentes` en la respuesta
+- Revisa los logs para ver si `_get_search_incidents()` encontró incidentes
 
 ---
 

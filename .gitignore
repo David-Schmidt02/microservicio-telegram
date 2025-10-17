@@ -44,6 +44,10 @@ temp_audio/
 *.mp3
 *.wav
 
+# Data files (excepto ejemplos)
+data/*.yaml
+!data/*.example
+
 # OS
 .DS_Store
 Thumbs.db

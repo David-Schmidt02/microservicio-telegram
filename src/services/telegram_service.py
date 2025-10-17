@@ -5,6 +5,7 @@ from typing import Optional, List
 from src.config.settings import settings
 from src.utils.logger import setup_logger
 from src.schemas import TelegramTextMessage, TelegramAudioMessage
+from src.services.authorization_service import AuthorizationService
 
 logger = setup_logger(__name__)
 
@@ -12,13 +13,14 @@ logger = setup_logger(__name__)
 class TelegramService:
     """Servicio para interactuar con la API de Telegram"""
 
-    def __init__(self):
+    def __init__(self, authorization_service: AuthorizationService = None):
         self.bot_token = settings.TELEGRAM_BOT_TOKEN
         self.chat_id = settings.TELEGRAM_CHAT_ID
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.last_update_id = 0
         self.temp_audio_dir = "temp_audio"
         self._session: Optional[aiohttp.ClientSession] = None
+        self.auth_service = authorization_service or AuthorizationService()
 
         if not os.path.exists(self.temp_audio_dir):
             os.makedirs(self.temp_audio_dir)
@@ -95,27 +97,56 @@ class TelegramService:
         logger.info(f"Audio descargado: {local_file_path}")
         return local_file_path
 
-    async def send_message(self, text: str, reply_to_message_id: Optional[int] = None, retries: int = 0) -> bool:
-        """Envía un mensaje al chat configurado."""
+    def _split_by_incidents(self, text: str) -> List[str]:
+        """Divide el mensaje por incidentes usando --- como separador."""
+        parts = text.split('---')
+        # Filtrar partes vacías
+        return [part.strip() for part in parts if part.strip()]
+
+    async def _send_message_parts(self, parts: List[str], reply_to_message_id: Optional[int] = None) -> bool:
+        """Envía múltiples partes de un mensaje al chat."""
         url = f"{self.base_url}/sendMessage"
-        payload: dict[str, str | int] = {  # Diccionario con claves str y valores str o int
-            "chat_id": self.chat_id,
-            "text": text
-        }
+        all_success = True
+
+        for i, part in enumerate(parts):
+            payload = {
+                "chat_id": self.chat_id,
+                "text": part
+            }
+
+            # Solo el primer mensaje responde al mensaje original
+            if reply_to_message_id and i == 0:
+                payload["reply_to_message_id"] = reply_to_message_id
+
+            try:
+                session = await self._get_session()
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+
+                    if not data.get("ok", False):
+                        logger.error(f"Error al enviar parte {i+1}/{len(parts)}")
+                        all_success = False
+
+                # Pausa entre mensajes
+                if i < len(parts) - 1:
+                    await asyncio.sleep(0.5)
+
+            except Exception as e:
+                logger.error(f"Error al enviar mensaje parte {i+1}: {e}")
+                all_success = False
+
+        return all_success
+
+    async def send_message(self, text: str, reply_to_message_id: Optional[int] = None, retries: int = 0) -> bool:
+        """Envía un mensaje al chat configurado. Si tiene incidentes separados por ---, los envía por separado."""
         logger.info("PASO 4 - Enviar mensaje al chat")
-        if reply_to_message_id:
-            payload["reply_to_message_id"] = reply_to_message_id
 
-        try:
-            session = await self._get_session()
-            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return data.get("ok", False)
+        # Dividir por incidentes
+        parts = self._split_by_incidents(text)
 
-        except Exception as e:
-            logger.error(f"Error al enviar mensaje: {e}")
-            return False
+        # Enviar las partes
+        return await self._send_message_parts(parts, reply_to_message_id)
 
     async def _process_update(self, update, audio_callback, text_callback):
         """Procesa un update individual. Parsea el mensaje y llama al callback correspondiente."""
@@ -126,12 +157,30 @@ class TelegramService:
             if "voice" in message or "audio" in message:
                 msg = TelegramAudioMessage.from_telegram_update(update)
                 logger.info(f"Audio de {msg.user.get_display_name()}")
+
+                # Validar whitelist
+                if not self.auth_service.is_message_allowed(msg.user.user_id, msg.chat.chat_id):
+                    await self.send_message(
+                        "⛔ No estás autorizado para usar este bot.",
+                        reply_to_message_id=msg.message_id
+                    )
+                    return
+
                 await audio_callback(msg)
 
             # Procesar mensaje de texto
             elif "text" in message:
                 msg = TelegramTextMessage.from_telegram_update(update)
                 logger.info(f"Texto de {msg.user.get_display_name()}: {msg.text}...")
+
+                # Validar whitelist
+                if not self.auth_service.is_message_allowed(msg.user.user_id, msg.chat.chat_id):
+                    await self.send_message(
+                        "⛔ No estás autorizado para usar este bot.",
+                        reply_to_message_id=msg.message_id
+                    )
+                    return
+
                 await text_callback(msg)
 
         except Exception as e:
