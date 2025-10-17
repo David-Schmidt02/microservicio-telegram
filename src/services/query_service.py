@@ -24,7 +24,7 @@ class QueryService:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def send_query(self, question: str, session_id: str = "telegram-bot-session", retries: int = 0) -> Dict[str, Any]:
+    async def send_query(self, question: str, session_id: str = "telegram-bot-session", retries: int = 1) -> Dict[str, Any]:
         """Envía una query al sistema destino y retorna la respuesta."""
         headers = {'Content-Type': 'application/json'}
         #if self.api_key:

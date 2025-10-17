@@ -148,6 +148,37 @@ class TelegramService:
         # Enviar las partes
         return await self._send_message_parts(parts, reply_to_message_id)
 
+    async def send_venue(self, latitude: float, longitude: float, title: str, address: str, reply_to_message_id: Optional[int] = None) -> bool:
+        """Envía una ubicación con título y dirección (venue) al chat configurado."""
+        url = f"{self.base_url}/sendVenue"
+        payload = {
+            "chat_id": self.chat_id,
+            "latitude": latitude,
+            "longitude": longitude,
+            "title": title,
+            "address": address
+        }
+
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
+
+        try:
+            session = await self._get_session()
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                data = await response.json()
+
+                if data.get("ok", False):
+                    logger.info(f"Venue enviado: {title}")
+                    return True
+                else:
+                    logger.error(f"Error al enviar venue: {data}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Error al enviar venue: {e}")
+            return False
+
     async def _process_update(self, update, audio_callback, text_callback):
         """Procesa un update individual. Parsea el mensaje y llama al callback correspondiente."""
         message = update.get("message", {})

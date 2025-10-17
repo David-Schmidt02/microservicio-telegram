@@ -16,6 +16,7 @@ class TelegramAudioBot:
         self.transcription_service = TranscriptionService()
         self.query_service = QueryService()
 
+
     def _get_search_incidents(self, result: dict) -> list:
         """Obtiene los incidentes si es una búsqueda válida del MCP search."""
         if result.get('mcp_server_used') != 'search':
@@ -24,6 +25,7 @@ class TelegramAudioBot:
         metadata = result.get('metadata', {})
         results = metadata.get('results', {})
         return results.get('incidentes', [])
+
 
     def _format_incident(self, incidente: dict, numero: int) -> str:
         """Formatea un incidente como mensaje de Telegram."""
@@ -40,50 +42,58 @@ class TelegramAudioBot:
 
         return mensaje
 
-    async def _send_search_incidents(self, incidentes: list, answer: str, reply_to_message_id: int):
+
+    async def _send_search_incidents(self, incidentes: list, answer: str, reply_to_message_id: int, audio_transcription: str = None):
         """Envía resumen e incidentes de una búsqueda."""
         # Enviar resumen (primeros 80 caracteres del answer)
-        resumen = answer[:60]
-        await self.telegram_service.send_message(
-            resumen,
-            reply_to_message_id=reply_to_message_id
-        )
 
-        # Enviar cada incidente formateado
+        resumen = answer[:60]
+        if audio_transcription:
+            message = f"🎤 Audio: {audio_transcription}\n\n💬 Respuesta: {resumen}"
+            await self.telegram_service.send_message(
+                message,
+                reply_to_message_id=reply_to_message_id
+            )
+        else:
+            await self.telegram_service.send_message(
+                resumen,
+                reply_to_message_id=reply_to_message_id
+            )
+
+        # Enviar cada incidente formateado con su ubicación
         for i, incidente in enumerate(incidentes, 1):
+            # Enviar mensaje con la información del incidente
             mensaje = self._format_incident(incidente, i)
             await self.telegram_service.send_message(mensaje)
 
-    async def _send_normal_response(self, answer: str, reply_to_message_id: int):
+            # Enviar venue si hay coordenadas disponibles
+            latitud = incidente.get('latitud')
+            longitud = incidente.get('longitud')
+
+            if latitud and longitud:
+                title = f"Incidente {i} - {incidente.get('barrio', 'Sin barrio')}"
+                address = f"{incidente.get('direccion', 'Sin dirección')}, {incidente.get('comuna', '')}"
+
+                await self.telegram_service.send_venue(
+                    latitude=latitud,
+                    longitude=longitud,
+                    title=title,
+                    address=address
+                )
+
+
+    async def _send_normal_response(self, answer: str, reply_to_message_id: int, audio_transcription: str = None):
         """Envía una respuesta normal sin incidentes."""
-        await self.telegram_service.send_message(
-            f"{answer}",
-            reply_to_message_id=reply_to_message_id
-        )
-
-    async def _send_audio_search_incidents(self, transcription: str, incidentes: list, answer: str, reply_to_message_id: int):
-        """Envía transcripción, resumen e incidentes de una búsqueda desde audio."""
-        # Enviar transcripción del audio
-        await self.telegram_service.send_message(
-            f"🎤 Audio: {transcription}",
-            reply_to_message_id=reply_to_message_id
-        )
-
-        # Enviar resumen (primeros 60 caracteres del answer)
-        resumen = answer[:60]
-        await self.telegram_service.send_message(resumen)
-
-        # Enviar cada incidente formateado
-        for i, incidente in enumerate(incidentes, 1):
-            mensaje = self._format_incident(incidente, i)
-            await self.telegram_service.send_message(mensaje)
-
-    async def _send_audio_normal_response(self, transcription: str, answer: str, reply_to_message_id: int):
-        """Envía una respuesta normal de audio con transcripción."""
-        await self.telegram_service.send_message(
-            f"🎤 Audio: {transcription}\n\n💬 Respuesta: {answer}",
-            reply_to_message_id=reply_to_message_id
-        )
+        if audio_transcription:
+            await self.telegram_service.send_message(
+                f"🎤 Audio: {audio_transcription}\n\n💬 Respuesta: {answer}",
+                reply_to_message_id=reply_to_message_id
+            )
+        else:
+            await self.telegram_service.send_message(
+                f"{answer}",
+                reply_to_message_id=reply_to_message_id
+            )
 
 
     @handle_telegram_errors()
@@ -138,9 +148,10 @@ class TelegramAudioBot:
 
         # Paso 6: Enviar respuesta según el tipo
         if incidentes:
-            await self._send_audio_search_incidents(transcription, incidentes, answer, audio_message.message_id)
+            
+            await self._send_search_incidents(incidentes, answer, audio_message.message_id, transcription)
         else:
-            await self._send_audio_normal_response(transcription, answer, audio_message.message_id)
+            await self._send_normal_response(answer, audio_message.message_id, transcription)
 
         # Retornar el path del audio para que el decorador haga cleanup
         return None, audio_file_path
